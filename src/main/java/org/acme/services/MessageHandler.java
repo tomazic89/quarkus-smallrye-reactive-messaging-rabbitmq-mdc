@@ -21,7 +21,9 @@ import org.slf4j.MDC;
 import com.rabbitmq.client.BuiltinExchangeType;
 
 import io.quarkus.runtime.StartupEvent;
+import io.smallrye.reactive.messaging.providers.helpers.VertxContext;
 import io.smallrye.reactive.messaging.rabbitmq.IncomingRabbitMQMessage;
+import io.vertx.core.Context;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.JsonObject;
 import io.vertx.rabbitmq.QueueOptions;
@@ -54,7 +56,7 @@ public class MessageHandler {
         args.put("x-message-ttl", 5000);
         client.addConnectionEstablishedCallback(
                 promise -> client.exchangeDeclare(EXCHANGE, BuiltinExchangeType.FANOUT.getType(), false, false)
-                        .compose(dok -> client.queueDeclare(GREETING_QUEUE, false, false, true, args))
+                        .compose(dok -> client.queueDeclare(GREETING_QUEUE, false, false, false, args))
                         .compose(dok -> client.queueBind(GREETING_QUEUE, EXCHANGE, ROUTING_KEY))
                         .onSuccess(unused -> setListener(GREETING_QUEUE))
                         .onComplete(promise));
@@ -68,7 +70,10 @@ public class MessageHandler {
         client.basicConsumer(queueName, options, result -> {
             if (result.succeeded()) {
                 RabbitMQConsumer mqConsumer = result.result();
-                mqConsumer.handler(this::handleMessage);
+                mqConsumer.handler(message -> {
+                    final var newDuplicatedContext = VertxContext.createNewDuplicatedContext();
+                    VertxContext.runOnContext(newDuplicatedContext, () -> handleMessage(message));
+                });
                 log.info("consumer started on {}", queueName);
             } else {
                 log.error("error", result.cause());
