@@ -1,8 +1,10 @@
 package org.acme.services;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.HashMap;
-import java.util.UUID;
 
 import javax.enterprise.context.ApplicationScoped;
 import javax.enterprise.event.Observes;
@@ -11,16 +13,14 @@ import javax.inject.Inject;
 import org.acme.model.AmqpMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.slf4j.MDC;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rabbitmq.client.AMQP;
 import com.rabbitmq.client.BuiltinExchangeType;
+import com.rabbitmq.client.Channel;
+import com.rabbitmq.client.Connection;
 
+import io.quarkiverse.rabbitmqclient.RabbitMQClient;
 import io.quarkus.runtime.StartupEvent;
-import io.vertx.core.buffer.Buffer;
-import io.vertx.rabbitmq.RabbitMQClient;
 
 @ApplicationScoped
 public class GreetingService {
@@ -35,32 +35,36 @@ public class GreetingService {
     public static final String MESSAGE_HEADER_SESSION_ID = "sessionId";
 
     @Inject
-    ObjectMapper objectMapper;
+    RabbitMQClient rabbitMQClient;
 
-    @Inject
-    RabbitMQClient client;
+    private Channel channel;
 
-    void createChanel(@Observes StartupEvent event) {
-        client.start(asyncResult -> {
-            if (asyncResult.succeeded()) {
-                log.info("RabbitMQ successfully connected!");
-                client.exchangeDeclare(EXCHANGE, BuiltinExchangeType.FANOUT.getType(), false, false)
-                        .onSuccess(unused -> {
-                            final var correlationId = UUID.randomUUID().toString();
-                            MDC.put(MESSAGE_HEADER_CORRELATION_ID, correlationId);
-                            sendToExchange(correlationId, "Hello from Greeting service");
-                        });
-            } else {
-                log.info("Fail to connect to RabbitMQ {}", asyncResult.cause().getMessage());
-            }
-        });
+    public void onApplicationStart(@Observes StartupEvent event) {
+        setupQueues();
+    }
+
+    protected void setupQueues() {
+        try {
+            // create a connection
+            Connection connection = rabbitMQClient.connect();
+            // create a channel
+            channel = connection.createChannel();
+            // declare exchange
+            channel.exchangeDeclare(EXCHANGE, BuiltinExchangeType.FANOUT, false);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 
     public void sendToExchange(String correlationId, String message) {
         log.info("Sending message to exchanges: [{}, {}], message: {}", EXCHANGE, MP_GREETING_EXCHANGE, message);
         final var amqpMessage = createAmqpMessage(correlationId, "greeting", message);
-        client.basicPublish(EXCHANGE, ROUTING_KEY, amqpMessage.properties(), amqpMessage.body());
-        client.basicPublish(MP_GREETING_EXCHANGE, ROUTING_KEY, amqpMessage.properties(), amqpMessage.body());
+        try {
+            channel.basicPublish(EXCHANGE, ROUTING_KEY, amqpMessage.properties(), amqpMessage.body());
+            channel.basicPublish(MP_GREETING_EXCHANGE, ROUTING_KEY, amqpMessage.properties(), amqpMessage.body());
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 
     public AmqpMessage createAmqpMessage(String correlationId, String eventType, String message) {
@@ -75,14 +79,6 @@ public class GreetingService {
                 .headers(headers)
                 .build();
 
-        return new AmqpMessage(writeValueAsBytes(message), messageProperties, eventType);
-    }
-
-    private Buffer writeValueAsBytes(Object value) throws RuntimeException {
-        try {
-            return Buffer.buffer(objectMapper.writeValueAsBytes(value));
-        } catch (JsonProcessingException e) {
-            throw new RuntimeException("Could not serialize to json", e);
-        }
+        return new AmqpMessage(message.getBytes(StandardCharsets.UTF_8), messageProperties, eventType);
     }
 }
