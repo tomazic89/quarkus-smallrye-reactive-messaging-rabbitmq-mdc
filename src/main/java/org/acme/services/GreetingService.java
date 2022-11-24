@@ -26,10 +26,13 @@ import io.vertx.rabbitmq.RabbitMQClient;
 public class GreetingService {
     private static final Logger log = LoggerFactory.getLogger(GreetingService.class);
 
-    public static final String EXCHANGE = "mdc-test";
+    public static final String MP_GREETING_EXCHANGE = "greeting";
+    public static final String EXCHANGE = "manual-greeting";
+    public static final String GREETING_QUEUE = "manual-greeting";
     public static final String ROUTING_KEY = "greeting";
     public static final String MESSAGE_HEADER_CORRELATION_ID = "correlationId";
     public static final String MESSAGE_HEADER_EVENT_TYPE = "eventType";
+    public static final String MESSAGE_HEADER_SESSION_ID = "sessionId";
 
     @Inject
     ObjectMapper objectMapper;
@@ -54,16 +57,17 @@ public class GreetingService {
     }
 
     public void sendToExchange(String correlationId, String message) {
-        log.info("Sending message to exchange: {}, message: {}", EXCHANGE, message);
+        log.info("Sending message to exchanges: [{}, {}], message: {}", EXCHANGE, MP_GREETING_EXCHANGE, message);
         final var amqpMessage = createAmqpMessage(correlationId, "greeting", message);
         client.basicPublish(EXCHANGE, ROUTING_KEY, amqpMessage.properties(), amqpMessage.body());
+        client.basicPublish(MP_GREETING_EXCHANGE, ROUTING_KEY, amqpMessage.properties(), amqpMessage.body());
     }
 
     public AmqpMessage createAmqpMessage(String correlationId, String eventType, String message) {
         var headers = new HashMap<String, Object>();
         headers.put(MESSAGE_HEADER_CORRELATION_ID, correlationId);
         headers.put(MESSAGE_HEADER_EVENT_TYPE, eventType);
-        log.info("[{}] backend payload: {},  headers: {}", correlationId, message, headers);
+        log.info("backend payload: {},  headers: {}", message, headers);
         final AMQP.BasicProperties messageProperties = new AMQP.BasicProperties()
                 .builder()
                 .correlationId(correlationId)

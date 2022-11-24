@@ -25,6 +25,9 @@ public class GreetingResource {
     @GET
     @Produces(MediaType.TEXT_PLAIN)
     public String hello() {
+        final var correlationId = UUID.randomUUID().toString();
+        MDC.put(MESSAGE_HEADER_CORRELATION_ID, correlationId);
+        service.sendToExchange(correlationId, "Hello from RESTEasy Reactive");
         return "Hello from RESTEasy Reactive";
     }
 

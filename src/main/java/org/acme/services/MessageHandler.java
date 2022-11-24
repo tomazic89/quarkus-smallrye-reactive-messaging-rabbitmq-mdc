@@ -1,14 +1,19 @@
 package org.acme.services;
 
 import static org.acme.services.GreetingService.EXCHANGE;
+import static org.acme.services.GreetingService.GREETING_QUEUE;
 import static org.acme.services.GreetingService.MESSAGE_HEADER_CORRELATION_ID;
 import static org.acme.services.GreetingService.MESSAGE_HEADER_EVENT_TYPE;
 import static org.acme.services.GreetingService.ROUTING_KEY;
+
+import java.util.concurrent.CompletionStage;
 
 import javax.enterprise.context.ApplicationScoped;
 import javax.enterprise.event.Observes;
 import javax.inject.Inject;
 
+import org.eclipse.microprofile.reactive.messaging.Incoming;
+import org.eclipse.microprofile.reactive.messaging.Message;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -16,6 +21,8 @@ import org.slf4j.MDC;
 import com.rabbitmq.client.BuiltinExchangeType;
 
 import io.quarkus.runtime.StartupEvent;
+import io.smallrye.reactive.messaging.rabbitmq.IncomingRabbitMQMessage;
+import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.JsonObject;
 import io.vertx.rabbitmq.QueueOptions;
 import io.vertx.rabbitmq.RabbitMQClient;
@@ -25,8 +32,6 @@ import io.vertx.rabbitmq.RabbitMQMessage;
 @ApplicationScoped
 public class MessageHandler {
     private static final Logger log = LoggerFactory.getLogger(MessageHandler.class);
-
-    private static final String GREETING_QUEUE = "greeting";
 
     @Inject
     RabbitMQClient client;
@@ -49,7 +54,7 @@ public class MessageHandler {
         args.put("x-message-ttl", 5000);
         client.addConnectionEstablishedCallback(
                 promise -> client.exchangeDeclare(EXCHANGE, BuiltinExchangeType.FANOUT.getType(), false, false)
-                        .compose(dok -> client.queueDeclare(GREETING_QUEUE, true, false, true, args))
+                        .compose(dok -> client.queueDeclare(GREETING_QUEUE, false, false, true, args))
                         .compose(dok -> client.queueBind(GREETING_QUEUE, EXCHANGE, ROUTING_KEY))
                         .onSuccess(unused -> setListener(GREETING_QUEUE))
                         .onComplete(promise));
@@ -81,7 +86,18 @@ public class MessageHandler {
         MDC.put("sanity", "check");
 
         // just print the received message
-        log.info("Received the message. Expecting MDC to contain correlationId. message: {}", body.toString());
+        log.info("Received the message on manual handler. Expecting MDC to contain correlationId. message: {}",
+                body.toString());
+    }
+
+    @Incoming("greeting")
+    public CompletionStage<Void> consume(Message message) {
+        final var unwrap = (IncomingRabbitMQMessage) message.unwrap(IncomingRabbitMQMessage.class);
+        MDC.put(MESSAGE_HEADER_CORRELATION_ID, unwrap.getCorrelationId().toString());
+        final var buffer = Buffer.buffer((byte[]) unwrap.getPayload());
+        log.info("Received the message on microprofile handler. Expecting MDC to contain correlationId. message: {}", buffer);
+
+        return message.ack();
     }
 
 }
